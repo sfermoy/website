@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+
+  <!-- Google fonts -->
+  <link href='https://fonts.googleapis.com/css?family=Open+Sans:300,400' rel='stylesheet' type='text/css'>
+
+  <!-- <script src="d3.v3.js"></script> -->
+
+<script src="http://d3js.org/d3.v3.min.js"></script>
+
+  <style>
+    body {
+      font-size: 16px;
+      font-family: 'Open Sans', sans-serif;
+      font-weight: 400;
+      text-align: center;
+    }
+
+    #title {
+      font-size: 20px;
+      padding-bottom: 10px;
+      padding-top: 20px;
+      font-weight: 300;
+    }
+
+    #explanation {
+      font-size: 12px;
+      max-width: 620px;
+      margin: 0 auto;
+      padding-top: 10px;
+      color: #ababab;
+      font-weight: 300;
+    }
+
+    .y.axis line {
+      fill: none;
+    }
+
+    .x.axis line {
+      fill: none;
+      stroke: #e0e0e0;
+      shape-rendering: crispEdges;
+    }
+
+    .axis path {
+      display: none;
+    }
+
+    .brush .extent {
+      fill-opacity: .125;
+      shape-rendering: crispEdges;
+    }
+
+    .resize {
+      display: inline !important; /* show when empty */
+      fill: #7A7A7A;
+      fill-opacity: 1;
+      stroke: #7A7A7A;
+      stroke-width: 2px;
+    }
+    
+    .toolTip {
+  position: absolute;
+  display: none;
+  min-width: 80px;
+  height: auto;
+  background: none repeat scroll 0 0 #ffffff;
+  border: 1px solid #6F257F;
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+}
+
+    .bar {
+      /*shape-rendering: crispEdges;*/
+    }
+    
+    /*HTML Horizonal Legend*/
+.country-name {
+    margin: 0 !important;
+}
+.key-dot {
+    display: inline-block;
+    height: 10px;
+    margin-right: .5em;
+    width: 10px;
+}
+
+.removed { background: red;
+          opacity:0.3  }
+.some { background: orange;
+         opacity:0.3}
+
+
+#legend2{
+    overflow:hidden;
+}
+.legend2 {
+    float:left;
+    margin-right: 1em;
+}
+
+
+  </style>
+
+</head>
+<!--<script type='text/javascript' src='http://getfirebug.com/releases/lite/1.2/firebug-lite-compressed.js'></script>-->
+<body>
+
+  <div id="title">Metafacet: Concordance Meta-data facet distributions </div>
+  <div id="legend2" align="centre">
+	   <div class="legend2"> <p class="country-name"><span class="key-dot removed"></span>All Lines Removed</p> </div>
+	   <div class="legend2"> <p class="country-name"><span class="key-dot some"></span>Some Lines Removed</p> </div>
+	</div>
+  <div id="chart"></div>
+  <div id="explination"> This plugin can be used to see the number of lines in the current concordance which are associated with a
+      particular piece of metadata, and to filter the concordance based on the metadata.
+      <ul><li>EXAMPLE</li>
+          <li>Select metafacet such as "author" form the dropdown.</li>
+          <li>Then expand/contract/slide the range view to relevant data (Authors).</li>
+      <li>Clicking on a bar will remove/add the concordance lines associated with the attribute</li>
+      <li>Ctrl+click removes all lines but the ones associated with the attribute clicked</li>
+      <li>Once you are happy with your new concordance list the "Update Bars/Load concordance" refreshes MetaFacet for the filtered list</li>
+      <li>Mosiac plugin works with MetaFacet</li>
+      <li>Removing lines from one attribute effects the other attribute views. Orange attribute bars are ones which have been partially removed from th concordance by another attribute interaction </li>
+      </ul>
+     
+
+  <script>
+
+  var svg,
+      defs,
+      gBrush,
+      brush,
+      main_xScale,
+      mini_xScale,
+      main_yScale,
+      mini_yScale,
+      main_yZoom,
+      main_xAxis,
+      main_yAxis,
+      mini_width,
+      textScale,
+      numConclines,
+      dropdown,
+      initdata;
+
+var attrSelected ="Filename";
+var removedKeys = new Set();
+var shouldSort = false;
+
+//stores the reordered data so we can extraxt metadata assoiated with attribute keys
+var nested;
+
+dropdown = d3.select("#chart").append("div")
+                .attr("id","drop")
+                .attr("align","centre")
+                ;
+        
+//Added only for the mouse wheel
+var zoomer = d3.behavior.zoom()
+    .on("zoom", null);
+
+var main_margin = {top: 10, right: 10, bottom: 30, left: 150},
+    main_width = 500 - main_margin.left - main_margin.right,
+    main_height = 400 - main_margin.top - main_margin.bottom;
+
+var mini_margin = {top: 10, right: 10, bottom: 30, left: 10},
+    mini_height = 400 - mini_margin.top - mini_margin.bottom;
+mini_width = 100 - mini_margin.left - mini_margin.right;
+
+svg = d3.select("#chart").append("svg")
+        .attr("class", "svgWrapper")
+        .attr("width", main_width + main_margin.left + main_margin.right + mini_width + mini_margin.left + mini_margin.right)
+        .attr("height", main_height + main_margin.top + main_margin.bottom)
+        .call(zoomer)
+        .on("wheel.zoom", scroll)
+        //.on("mousewheel.zoom", scroll)
+        //.on("DOMMouseScroll.zoom", scroll)
+        //.on("MozMousePixelScroll.zoom", scroll)
+        //Is this needed?
+        .on("mousedown.zoom", null)
+        .on("touchstart.zoom", null)
+        .on("touchmove.zoom", null)
+        .on("touchend.zoom", null);
+
+        
+    var selector = d3.select("#drop")
+    .append("select")
+    .attr("id","dropdown")
+    .on("change", function(d){
+            selection = document.getElementById("dropdown");
+            //console.log(selection.value)
+            svg.selectAll("*").remove();
+            //d3.select("#dropdown").remove();
+            attrSelected = selection.value;
+            dataProcess(selection.value);
+            
+    });
+    
+    var checkbox = d3.select("#drop")
+    .append("input")
+    .attr("type","checkbox")
+    .attr("id","cb")
+    .attr("name","cb")
+    .on("change", function(d){
+            if(shouldSort ===true)
+                shouldSort = false
+            else
+                shouldSort = true;
+            selection = document.getElementById("dropdown");
+            dataProcess(selection.value);
+            
+    });
+    d3.select("#drop")
+    .append("label")
+    .attr("for","cb")
+    .text("Sort by frequency");
+    
+    
+//    var elements = ["Filename","Title", "Collection_Title", "Editor", "Author", "Publication_Date", "Authorship_Date", "Translator",
+//        "Source_Date", "Source_Filename", "Source_Language", "Original_Title" ,"Outlet", "Internet_Outlet","Format"];
+        var elements = ["Filename","Title", "Collection_Title", "Editor", "Author"];
+      
+    
+var tooltip = d3.select("body").append("div").attr("class", "toolTip");
+
+  function init() {
+      
+
+    /////////////////////////////////////////////////////////////
+    ///////////////// Set-up SVG and wrappers ///////////////////
+    /////////////////////////////////////////////////////////////
+    
+    selector.selectAll("option")
+      .data(elements)
+      .enter().append("option")
+      .attr("value", function(d){
+        return d;
+      })
+      .text(function(d){
+        return d;
+      });
+
+
+    var mainGroup = svg.append("g")
+            .attr("class","mainGroupWrapper")
+            .attr("transform","translate(" + main_margin.left + "," + main_margin.top + ")")
+            .append("g") //another one for the clip path - due to not wanting to clip the labels
+            .attr("clip-path", "url(#clip)")
+            .style("clip-path", "url(#clip)")
+            .attr("class","mainGroup")
+            
+
+    var miniGroup = svg.append("g")
+            .attr("class","miniGroup")
+            .attr("transform","translate(" + (main_margin.left + main_width + main_margin.right + mini_margin.left) + "," + mini_margin.top + ")");
+
+    var brushGroup = svg.append("g")
+            .attr("class","brushGroup")
+            .attr("transform","translate(" + (main_margin.left + main_width + main_margin.right + mini_margin.left) + "," + mini_margin.top + ")");
+
+    /////////////////////////////////////////////////////////////
+    ////////////////////// Initiate scales //////////////////////
+    /////////////////////////////////////////////////////////////
+
+    main_xScale = d3.scale.linear().range([0, main_width]);
+    mini_xScale = d3.scale.linear().range([0, mini_width]);
+
+    main_yScale = d3.scale.ordinal().rangeBands([0, main_height], 0.4, 0);
+    mini_yScale = d3.scale.ordinal().rangeBands([0, mini_height], 0.4, 0);
+
+    //Based on the idea from: http://stackoverflow.com/questions/21485339/d3-brushing-on-grouped-bar-chart
+    main_yZoom = d3.scale.linear()
+        .range([0, main_height])
+        .domain([0, main_height]);
+
+    //Create x axis object
+    main_xAxis = d3.svg.axis()
+      .scale(main_xScale)
+      .orient("bottom")
+      .ticks(4)
+      //.tickSize(0)
+      .outerTickSize(0);
+
+    //Add group for the x axis
+    d3.select(".mainGroupWrapper").append("g")
+        .attr("class", "x axis")
+        .attr("transform", "translate(" + 0 + "," + (main_height + 5) + ")");
+
+    //Create y axis object
+    main_yAxis = d3.svg.axis()
+      .scale(main_yScale)
+      .orient("left")
+      .tickSize(0)
+      .outerTickSize(0);
+
+    //Add group for the y axis
+    mainGroup.append("g")
+        .attr("class", "y axis")
+        .attr("transform", "translate(-5,0)");
+ 
+    /////////////////////////////////////////////////////////////
+    /////////////////////// Update scales ///////////////////////
+    /////////////////////////////////////////////////////////////
+
+    //Update the scales
+    main_xScale.domain([0, d3.max(data, function(d) { return d.values; })]);
+    mini_xScale.domain([0, d3.max(data, function(d) { return d.values; })]);
+    main_yScale.domain(data.map(function(d) { return d.key; }));
+    mini_yScale.domain(data.map(function(d) { return d.key; }));
+    
+    //Create the visual part of the y axis
+    d3.select(".mainGroup").select(".y.axis").call(main_yAxis);
+    d3.select(".mainGroupWrapper").select(".x.axis").call(main_xAxis);
+    
+    
+   
+
+    /////////////////////////////////////////////////////////////
+    ///////////////////// Label axis scales /////////////////////
+    /////////////////////////////////////////////////////////////
+
+    textScale = d3.scale.linear()
+      .domain([15,50])
+      .range([12,6])
+      .clamp(true);
+    
+    /////////////////////////////////////////////////////////////
+    ///////////////////////// Create brush //////////////////////
+    /////////////////////////////////////////////////////////////
+
+    //What should the first extent of the brush become - a bit arbitrary this
+    var brushExtent = Math.max( 0,  Math.floor(data.length*.7)  );
+    
+    brush = d3.svg.brush()
+        .y(mini_yScale)
+        .extent([mini_yScale(data[0].key), mini_height])
+        .on("brush", brushmove)
+        //.on("brushend", brushend);
+
+    //Set up the visual part of the brush
+    gBrush = d3.select(".brushGroup").append("g")
+      .attr("class", "brush")
+      .call(brush);
+    
+    gBrush.selectAll(".resize")
+      .append("line")
+      .attr("x2", mini_width);
+
+    gBrush.selectAll(".resize")
+      .append("path")
+      .attr("d", d3.svg.symbol().type("triangle-up").size(20))
+      .attr("transform", function(d,i) { 
+        return i ? "translate(" + (mini_width/2) + "," + 4 + ") rotate(180)" : "translate(" + (mini_width/2) + "," + -4 + ") rotate(0)"; 
+      });
+
+    gBrush.selectAll("rect")
+      .attr("width", mini_width);
+
+    //On a click recenter the brush window
+    gBrush.select(".background")
+      .on("mousedown.brush", brushcenter)
+      .on("touchstart.brush", brushcenter);
+
+    ///////////////////////////////////////////////////////////////////////////
+    /////////////////// Create a rainbow gradient - for fun ///////////////////
+    ///////////////////////////////////////////////////////////////////////////
+
+    defs = svg.append("defs")
+
+    //Create two separate gradients for the main and mini bar - just because it looks fun
+    createGradient("gradient-rainbow-main", "60%");
+    createGradient("gradient-rainbow-mini", "13%");
+
+    //Add the clip path for the main bar chart
+    defs.append("clipPath")
+      .attr("id", "clip")
+      .append("rect")
+	    .attr("x", -main_margin.left)
+      .attr("width", main_width + main_margin.left)
+      .attr("height", main_height);
+
+    /////////////////////////////////////////////////////////////
+    /////////////// Set-up the mini bar chart ///////////////////
+    /////////////////////////////////////////////////////////////
+
+    //The mini brushable bar
+    //DATA JOIN
+    var mini_bar = d3.select(".miniGroup").selectAll(".bar")
+      .data(data, function(d) { return d.key; });
+
+    //UDPATE
+    mini_bar
+      .attr("width", function(d) { return mini_xScale(d.values); })
+      .attr("y", function(d,i) { return mini_yScale(d.key); })
+      .attr("height", mini_yScale.rangeBand());
+
+    //ENTER
+    mini_bar.enter().append("rect")
+      .attr("class", "bar")
+      .attr("x", 0)
+      .attr("width", function(d) { return mini_xScale(d.values); })
+      .attr("y", function(d,i) { return mini_yScale(d.key); })
+      .attr("height", mini_yScale.rangeBand())
+      .style("fill", "url(#gradient-rainbow-mini)");
+      
+    //EXIT
+    mini_bar.exit()
+      .remove();
+
+    //Start the brush
+    gBrush.call(brush.event);
+    brushmove();
+    
+    
+    var dragstartPos;
+    function dragStart() {
+            dragstartPos = d3.mouse(this);         
+        }
+        
+    function dragMove() {
+        var p = d3.mouse(this);
+        d3.select(".mainGroup").selectAll(".bar")
+            .each(function(b) {
+                var shouldRemove = false;
+                var yval = +d3.select(this).attr('y')
+                var shouldremove = false;
+                if (p[1] > dragstartPos[1])
+                    shouldremove = yval > dragstartPos[1] && yval < p[1];
+                if (p[1] < dragstartPos[1])
+                    shouldremove = yval < dragstartPos[1] && yval > p[1];
+                if(shouldremove ){
+                    var currentColor =  "red" ;                       
+                    var opacity =  0.3;
+                    d3.select(this).style("fill", currentColor);     
+                    d3.select(this).style("opacity", opacity);    
+            }
+      });
+  }
+          
+    function dragEnd() {
+        var p = d3.mouse(this);
+        d3.select(".mainGroup").selectAll(".bar")
+            .each(function(b) {
+                var yval = +d3.select(this).attr('y')
+                var shouldremove = false;
+                if (p[1] > dragstartPos[1])
+                    shouldremove = yval > dragstartPos[1] && yval < p[1];
+                if (p[1] < dragstartPos[1])
+                    shouldremove = yval < dragstartPos[1] && yval > p[1];
+                if(shouldremove ){
+                    var currentColor = "red" ;
+                    var opacity =  0.3 ;
+                    d3.select(this).style("fill", currentColor);     
+                    d3.select(this).style("opacity", opacity);
+                    remove(b.key);
+                 }
+               
+      });
+      vec.redisplay();
+    }
+
+        
+    var dragBehavior = d3.behavior.drag()
+    .on("dragstart", dragStart)
+    .on("drag", dragMove)
+    .on("dragend", dragEnd);
+
+    svg.call(dragBehavior);
+        
+  }//init
+
+  //Function runs on a brush move - to update the big bar chart
+  function update() {
+
+    /////////////////////////////////////////////////////////////
+    ////////// Update the bars of the main bar chart ////////////
+    /////////////////////////////////////////////////////////////
+
+    //DATA JOIN
+    var bar = d3.select(".mainGroup").selectAll(".bar")
+        .data(data, function(d) { return d.key; });
+
+    //UPDATE
+    bar
+      .attr("x", 0)
+      .attr("width", function(d) { return main_xScale(d.values); })
+      .attr("y", function(d,i) { return main_yScale(d.key); })
+      .attr("height", main_yScale.rangeBand())
+      .on("click", function(d) {
+          if ( d3.event.ctrlKey) {
+            d3.select(".mainGroup").selectAll(".bar")
+                    .each(function(b) {
+                        var shouldRemove = true;
+                        if(b.key === d.key)
+                            shouldRemove = false;
+                        var currentColor =  shouldRemove ?  "red":"url(#gradient-rainbow-main)" ;
+                        var opacity =  shouldRemove ? 0.3 : 1.0;
+                        d3.select(this).style("fill", currentColor);     
+                        d3.select(this).style("opacity", opacity);
+                        shouldRemove ? remove(b.key): add(b.key); ;
+              });             
+        }
+        else{
+            var removed = false;
+            var allRemoved = true;
+            nested.map(function(m) {
+                if(m.key === d.key){        
+                    m.values.map(function(v) { if(removedKeys.has(v.Filename+v.ID)){
+                            removed = true;
+                    }else{
+                        allRemoved = false;
+                    }});
+                };
+            });
+            var colChoice = allRemoved ?   "orange" :"red";
+            var currentColor =  removed ? "url(#gradient-rainbow-main)" : colChoice;
+            var opacity =  removed ? 1.0 : 0.3;
+            d3.select(this).style("fill", currentColor);     
+            d3.select(this).style("opacity", opacity);
+            removed ? add(d.key) : remove(d.key);
+            }
+                 vec.redisplay();
+    })
+      .on("mousemove", function(d){
+            tooltip
+              .style("left", d3.event.pageX - 50 + "px")
+              .style("top", d3.event.pageY - 70 + "px")
+              .style("display", "inline-block")
+              .html("Number of lines with attribute "+(d.key) +" : "+ (d.values) 
+              +"<br>Concordance Size : " +numConclines);
+        })
+    		.on("mouseout", function(d){ tooltip.style("display", "none");});;
+
+    //ENTER
+    bar.enter().append("rect")
+      .attr("class", "bar")
+      .style("fill",function(d) {
+        var removed = false;
+        var allRemoved = true;
+        nested.map(function(m) {
+            if(m.key === d.key){   
+                m.values.map(function(v) { if(removedKeys.has(v.Filename+v.ID)){
+                        removed = true;
+                }else{
+                    allRemoved = false;
+                }});
+            };
+        });
+        var colChoice = allRemoved ? "red" : "orange";
+        var col = removed ? colChoice : "url(#gradient-rainbow-main)";
+        return col;
+    })
+       .style("opacity", function(d) {
+            var removed = false;
+            nested.map(function(m) {
+                if(m.key === d.key){        
+                    m.values.map(function(v) { if(removedKeys.has(v.Filename+v.ID)){
+                            removed = true;
+                    } });
+                };
+            });
+            var opacity =  removed ? 0.3 : 1.0;
+            return opacity;
+         })
+      .attr("x", 0)
+      .attr("width", function(d) { return main_xScale(d.values); })
+      .attr("y", function(d,i) { return main_yScale(d.key); })
+      .attr("height", main_yScale.rangeBand());
+
+    //EXIT
+    bar.exit()
+      .remove();
+
+  }//update
+
+  /////////////////////////////////////////////////////////////
+  ////////////////////// Brush functions //////////////////////
+  /////////////////////////////////////////////////////////////
+
+  //First function that runs on a brush move
+  function brushmove() {
+
+    var extent = brush.extent();
+
+    //Reset the part that is visible on the big chart
+    var originalRange = main_yZoom.range();
+    main_yZoom.domain( extent );
+
+    /////////////////////////////////////////////////////////////
+    ///////////////////// Update the axis ///////////////////////
+    /////////////////////////////////////////////////////////////
+
+    //Update the domain of the x & y scale of the big bar chart
+    main_yScale.domain(data.map(function(d) { return d.key; }));
+    main_yScale.rangeBands( [ main_yZoom(originalRange[0]), main_yZoom(originalRange[1]) ], 0.4, 0);
+
+    //Update the y axis of the big chart
+    d3.select(".mainGroup")
+      .select(".y.axis")
+      .call(main_yAxis);
+
+    /////////////////////////////////////////////////////////////
+    /////////////// Update the mini bar fills ///////////////////
+    /////////////////////////////////////////////////////////////
+
+    //Update the colors within the mini bar chart
+    var selected = mini_yScale.domain()
+      .filter(function(d) { return (extent[0] - mini_yScale.rangeBand() + 1e-2 <= mini_yScale(d)) && (mini_yScale(d) <= extent[1] - 1e-2); }); 
+    //Update the colors of the mini chart - Make everything outside the brush grey
+    d3.select(".miniGroup").selectAll(".bar")
+      .style("fill", function(d, i) { return selected.indexOf(d.key) > -1 ? "url(#gradient-rainbow-mini)" : "#e0e0e0"; });
+
+    //Update the label size
+    d3.selectAll(".y.axis text")
+      .style("font-size", textScale(selected.length));
+    
+    //Update the big bar chart
+    update();
+    
+  }//brushmove
+
+  /////////////////////////////////////////////////////////////
+  ////////////////////// Click functions //////////////////////
+  /////////////////////////////////////////////////////////////
+
+  //Based on http://bl.ocks.org/mbostock/6498000
+  //What to do when the user clicks on another location along the brushable bar chart
+  function brushcenter() {
+    var target = d3.event.target,
+        extent = brush.extent(),
+        size = extent[1] - extent[0],
+        range = mini_yScale.range(),
+        y0 = d3.min(range) + size / 2,
+        y1 = d3.max(range) + mini_yScale.rangeBand() - size / 2,
+        center = Math.max( y0, Math.min( y1, d3.mouse(target)[1] ) );
+
+    d3.event.stopPropagation();
+
+    gBrush
+        .call(brush.extent([center - size / 2, center + size / 2]))
+        .call(brush.event);
+
+  }//brushcenter
+
+  /////////////////////////////////////////////////////////////
+  ///////////////////// Scroll functions //////////////////////
+  /////////////////////////////////////////////////////////////
+
+  function scroll() {
+
+    //Mouse scroll on the mini chart
+    var extent = brush.extent(),
+      size = extent[1] - extent[0],
+      range = mini_yScale.range(),
+      y0 = d3.min(range),
+      y1 = d3.max(range) + mini_yScale.rangeBand(),
+      dy = d3.event.deltaY,
+      topSection;
+
+    if ( extent[0] - dy < y0 ) { topSection = y0; } 
+    else if ( extent[1] - dy > y1 ) { topSection = y1 - size; } 
+    else { topSection = extent[0] - dy; }
+
+    //Make sure the page doesn't scroll as well
+    d3.event.stopPropagation();
+    d3.event.preventDefault();
+
+    gBrush
+        .call(brush.extent([ topSection, topSection + size ]))
+        .call(brush.event);
+
+  }//scroll
+
+  /////////////////////////////////////////////////////////////
+  ///////////////////// Helper functions //////////////////////
+  /////////////////////////////////////////////////////////////
+
+  //Create a gradient 
+  function createGradient(idName, endPerc) {
+
+    var coloursRainbow = ["#EFB605", "#E9A501", "#E48405", "#E34914", "#DE0D2B", "#CF003E", "#B90050", "#A30F65", "#8E297E", "#724097", "#4F54A8", "#296DA4", "#0C8B8C", "#0DA471", "#39B15E", "#7EB852"];
+
+    defs.append("linearGradient")
+      .attr("id", idName)
+      .attr("gradientUnits", "userSpaceOnUse")
+      .attr("x1", "0%").attr("y1", "0%")
+      .attr("x2", endPerc).attr("y2", "0%")
+      .selectAll("stop") 
+      .data(coloursRainbow)                  
+      .enter().append("stop") 
+      .attr("offset", function(d,i) { return i/(coloursRainbow.length-1); })   
+      .attr("stop-color", function(d) { return d; });
+  }//createGradient
+
+  //Function to generate random strings of 5 letters - for the demo only
+  function makeWord() {
+      var possible_UC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      var text = possible_UC.charAt(Math.floor(Math.random() * possible_UC.length));
+      
+      var possible_LC = "abcdefghijklmnopqrstuvwxyz";
+
+      for( var i=0; i < 5; i++ )
+          text += possible_LC.charAt(Math.floor(Math.random() * possible_LC.length));
+
+      return text;
+  }//makeWord
+  
+    function loadData(arr){
+         initdata = arr;
+        // get data length == number of concordance lines
+         numConclines = initdata.length;
+         removedKeys = new Set();
+                vec.updateVector();
+        data = initdata[0];
+        elements = Object.keys(data);
+        dataProcess(elements[0]);
+    }
+    
+    function dataProcess(attribute){
+        
+        svg.selectAll("*").remove();
+//        console.log(attribute)
+        var nameCount = d3.nest()
+        .key(function(d) { return d[attribute]; })
+        .rollup(function(v) { return v.length; })
+        .entries(initdata);
+        
+        if(shouldSort)
+            nameCount= nameCount.sort(function(a, b){ return d3.descending(a.values, b.values); });
+         nested = d3.nest()
+        .key(function(d) { return d[attribute]; })
+        .entries(initdata);  
+
+        
+//        d3.select('body')
+//        .append('div')
+//        .html("<p>"+JSON.stringify(nested)+"</p>");
+        //vec.printstr(JSON.stringify(nested));
+        data = nameCount;
+        init();
+    }
+        
+    function remove(key){
+        //removedKeys.add(key);
+        nested.map(function(m) {
+        if(m.key === key){
+            //console.log(m.key);       
+            m.values.map(function(v) { vec.removeLine(v.Filename, v.ID);
+                                       removedKeys.add(v.Filename+v.ID); });
+        };
+      });
+    }
+    
+    function add(key){
+        //removedKeys.delete(key);
+        nested.map(function(m) {
+        if(m.key === key){
+            //console.log(m.key);         
+            m.values.map(function(v) { vec.addLine(v.Filename, v.ID);
+                                       removedKeys.delete(v.Filename+v.ID); });
+        };
+      });
+
+    }
+  
+
+  </script>
+
+</body>
+</html>
